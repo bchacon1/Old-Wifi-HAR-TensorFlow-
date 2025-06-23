@@ -7,11 +7,11 @@ from torch.utils.data import Dataset, DataLoader
 
 # --- Model & Data Parameters (derived from original TF cross_vali_recurrent_network_wifi_activity.py
 # and cross_vali_data_convert_merge.py / cross_vali_input_data.py) ---
-window_size = 500   # Time steps in one input sequence
+window_size = 1000   # Time steps in one input sequence
 n_input = 90      # Features per time step (30 subcarriers * 3 antennas)
 n_steps = window_size # Renamed for clarity for LSTM input
 n_hidden = 200    # Number of hidden units in the LSTM
-n_classes = 7     # Number of activity classes
+n_classes = 8     # Number of activity classes
 
 # Parameters for data loading/preprocessing, matching cross_vali_data_convert_merge.py defaults
 threshold = 60 # Percentage threshold for activity detection
