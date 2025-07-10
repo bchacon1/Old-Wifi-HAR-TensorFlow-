@@ -13,11 +13,20 @@ import sys # For clean exit
 # --- Import your model and dataset classes and parameters from pytorch_model.py ---
 # Make sure pytorch_model.py contains WifiHARLSTM, WifiActivityDataset,
 # and the global parameters like n_input, n_hidden, n_classes, window_size, threshold
-from pytorch_model import WifiHARLSTM, WifiActivityDataset, n_input, n_hidden, n_classes, window_size, threshold
+from pytorch_model import (
+    WifiHARLSTM,
+    WifiActivityDataset,
+    n_input,
+    n_hidden,
+    n_classes,
+    window_size,
+    raw_window_size,
+    threshold,
+)
 
 # --- CONFIGURABLE PARAMETERS ---
 learning_rate = 0.0001
-training_epochs = 2000
+training_iters = 2000  # number of minibatch updates per fold
 batch_size = 200
 display_step = 100 # How often to print training progress
 
@@ -63,6 +72,12 @@ if LOAD_FROM_NPY and os.path.exists(all_features_npy_path) and os.path.exists(al
     print(f"Loading data from pre-saved .npy files: {all_features_npy_path}, {all_labels_npy_path}")
     all_features_full = np.load(all_features_npy_path)
     all_labels_full = np.load(all_labels_npy_path)
+
+    # Ensure shapes match the TensorFlow pipeline expectations
+    if all_features_full.shape[1] == raw_window_size:
+        all_features_full = all_features_full[:, ::2, :]
+    if all_labels_full.shape[1] == 8:
+        all_labels_full = all_labels_full[:, 1:]
     print("Data loaded from .npy files successfully.")
 else:
     print("Loading data from CSVs (this may take a long time)...")
@@ -85,9 +100,14 @@ else:
         print(f"   Reading CSVs for activity: {label}...")
         features_csv = np.array(pd.read_csv(xx_file_path, header=None)).astype(np.float32)
         labels_csv = np.array(pd.read_csv(yy_file_path, header=None)).astype(np.float32)
+        # Drop the "NoActivity" column to match the 7-class setup
+        labels_csv = labels_csv[:, 1:]
 
-        # The data from CSVs is flattened, need to reshape to [num_samples, window_size, n_input]
-        features_csv = features_csv.reshape(-1, window_size, n_input)
+        # CSVs were generated with `raw_window_size` timesteps.  In the original
+        # TensorFlow pipeline each sequence is then downsampled to 500
+        # timesteps.  We reproduce the same procedure here.
+        features_csv = features_csv.reshape(-1, raw_window_size, n_input)
+        features_csv = features_csv[:, ::2, :]
 
         all_features_list_csv.append(features_csv)
         all_labels_list_csv.append(labels_csv)
@@ -141,6 +161,9 @@ try: # Wrap the main training loop in a try-except for graceful interruption
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
+        steps_per_epoch = len(train_loader)
+        training_epochs = int(np.ceil(training_iters / steps_per_epoch))
+
         # --- Model, Loss, Optimizer ---
         model = WifiHARLSTM(n_input, n_hidden, n_classes).to(device)
         criterion = nn.CrossEntropyLoss()
@@ -190,8 +213,8 @@ try: # Wrap the main training loop in a try-except for graceful interruption
                 print(f"    No checkpoint found for Fold {fold_idx + 1}. Starting training from epoch 0.")
 
         # Check if fold is already completed
-        if start_epoch >= training_epochs:
-            print(f"    Fold {fold_idx + 1} already completed all {training_epochs} epochs. Skipping training loop for this fold.")
+        if start_epoch * steps_per_epoch >= training_iters:
+            print(f"    Fold {fold_idx + 1} already completed all {training_iters} iterations. Skipping training loop for this fold.")
             # If skipping, we might still want to add the last known accuracy to cv_accuracies if available.
             # For simplicity, we'll let the final calculation pick it up if it's there.
             # No new validation run for confusion matrix if training is skipped to avoid redundant computation,
@@ -204,7 +227,8 @@ try: # Wrap the main training loop in a try-except for graceful interruption
                 # If no val_accuracies were loaded, or it was empty, we can't add to cv_accuracies.
                 # This case should ideally not happen if a fold completed.
                 pass
-        else: # Only run training loop if not already completed
+        else:  # Only run training loop if not already completed
+            global_step = start_epoch * steps_per_epoch
             for epoch in range(start_epoch, training_epochs):
                 # --- Training Phase ---
                 model.train()
@@ -222,6 +246,9 @@ try: # Wrap the main training loop in a try-except for graceful interruption
                     loss = criterion(outputs, labels_int)
                     loss.backward()
                     optimizer.step()
+                    global_step += 1
+                    if global_step >= training_iters:
+                        break
 
                     running_loss += loss.item() * inputs.size(0)
                     
@@ -229,8 +256,8 @@ try: # Wrap the main training loop in a try-except for graceful interruption
                     total_train += labels_int.size(0)
                     correct_train += (predicted == labels_int).sum().item()
 
-                epoch_train_loss = running_loss / len(train_loader.dataset)
-                epoch_train_accuracy = correct_train / total_train
+                epoch_train_loss = running_loss / total_train if total_train > 0 else 0
+                epoch_train_accuracy = correct_train / total_train if total_train > 0 else 0
                 train_losses.append(epoch_train_loss)
                 train_accuracies.append(epoch_train_accuracy)
 
@@ -258,19 +285,19 @@ try: # Wrap the main training loop in a try-except for graceful interruption
                         all_val_preds_fold.extend(predicted.cpu().numpy())
                         all_val_true_fold.extend(labels_int.cpu().numpy())
 
-                epoch_val_loss = val_running_loss / len(val_loader.dataset)
-                epoch_val_accuracy = correct_val / total_val
+                epoch_val_loss = val_running_loss / total_val if total_val > 0 else 0
+                epoch_val_accuracy = correct_val / total_val if total_val > 0 else 0
                 val_losses.append(epoch_val_loss)
                 val_accuracies.append(epoch_val_accuracy)
 
                 # --- Display Progress ---
-                if (epoch + 1) % display_step == 0 or epoch == training_epochs - 1:
+                if (epoch + 1) % display_step == 0 or global_step >= training_iters:
                     print(f"Epoch [{epoch + 1}/{training_epochs}], "
                           f"Train Loss: {epoch_train_loss:.4f}, Train Acc: {epoch_train_accuracy:.4f}, "
                           f"Val Loss: {epoch_val_loss:.4f}, Val Acc: {epoch_val_accuracy:.4f}")
 
                 # --- Checkpoint Saving ---
-                if (epoch + 1) % CHECKPOINT_SAVE_FREQUENCY == 0 or epoch == training_epochs - 1:
+                if (epoch + 1) % CHECKPOINT_SAVE_FREQUENCY == 0 or global_step >= training_iters:
                     checkpoint_path = os.path.join(output_folder, f"checkpoint_fold{fold_idx + 1}_epoch{epoch + 1}.pth")
                     torch.save({
                         'epoch': epoch + 1,
@@ -282,7 +309,10 @@ try: # Wrap the main training loop in a try-except for graceful interruption
                         'val_acc_history': val_accuracies, # Save history for plotting continuity
                     }, checkpoint_path)
                     print(f"    Checkpoint saved to {checkpoint_path}")
-            
+
+                if global_step >= training_iters:
+                    break
+
             # Append final validation accuracy for this fold if training occurred
             cv_accuracies.append(epoch_val_accuracy)
 

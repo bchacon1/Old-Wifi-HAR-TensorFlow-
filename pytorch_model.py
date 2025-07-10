@@ -7,11 +7,16 @@ from torch.utils.data import Dataset, DataLoader
 
 # --- Model & Data Parameters (derived from original TF cross_vali_recurrent_network_wifi_activity.py
 # and cross_vali_data_convert_merge.py / cross_vali_input_data.py) ---
-window_size = 1000   # Time steps in one input sequence
+# Original CSV files are generated with a 1000 sample window and later
+# downsampled to 500 timesteps for training in the TensorFlow code.  We
+# mirror that behaviour here by keeping the file window size for loading
+# but exposing a 500 timestep window to the model.
+raw_window_size = 1000        # window size used when generating CSV files
+window_size = 500             # time steps fed into the model after downsampling
 n_input = 90      # Features per time step (30 subcarriers * 3 antennas)
 n_steps = window_size # Renamed for clarity for LSTM input
 n_hidden = 200    # Number of hidden units in the LSTM
-n_classes = 8     # Number of activity classes
+n_classes = 7     # Number of activity classes (NoActivity removed)
 
 # Parameters for data loading/preprocessing, matching cross_vali_data_convert_merge.py defaults
 threshold = 60 # Percentage threshold for activity detection
@@ -73,15 +78,19 @@ class WifiActivityDataset(Dataset):
             self.threshold = threshold
             self.fold_num = fold_num # This fold_num implies a specific pre-generated file set
 
-            xx_file = os.path.join(self.input_files_dir, f"xx_{self.window_size}_{self.threshold}_{self.fold_num}.csv")
-            yy_file = os.path.join(self.input_files_dir, f"yy_{self.window_size}_{self.threshold}_{self.fold_num}.csv")
+            # CSVs were produced with a window size of `raw_window_size`
+            xx_file = os.path.join(self.input_files_dir,
+                                   f"xx_{raw_window_size}_{self.threshold}_{self.fold_num}.csv")
+            yy_file = os.path.join(self.input_files_dir,
+                                   f"yy_{raw_window_size}_{self.threshold}_{self.fold_num}.csv")
 
             if not os.path.exists(xx_file) or not os.path.exists(yy_file):
                 raise FileNotFoundError(f"Data files for fold {self.fold_num} not found. "
                                         f"Please ensure you've run 'cross_vali_data_convert_merge.py' "
                                         f"and specify the correct fold number or check file paths.")
 
-            # Load all data first, then apply subsampling as per original TF input_data.py
+            # Load all data first, then apply subsampling as per original
+            # TensorFlow input_data.py
             xx_full = np.array(pd.read_csv(xx_file, header=None)).astype(np.float32)
             yy_full = np.array(pd.read_csv(yy_file, header=None)).astype(np.float32)
 
@@ -90,11 +99,21 @@ class WifiActivityDataset(Dataset):
                 xx_full = xx_full[::skip_rows, :]
                 yy_full = yy_full[::skip_rows, :]
 
+            # Reshape to [num_samples, raw_window_size, n_input] then
+            # downsample to 500 timesteps as in the TensorFlow pipeline
+            xx_full = xx_full.reshape(-1, raw_window_size, self.n_input)
+            xx_full = xx_full[:, ::2, :]
+
             # Eliminate "NoActivity" data (labels with [2,0,0,0,0,0,0,0]) as per original TF script
             # In the original, it checks if column 0 of yy is 2.0 (representing NoActivity)
-            no_activity_mask = ~np.all(yy_full[:, 0] == 2, axis=0) # True if NOT [2,0,0,...] at index 0
+            # In the TensorFlow preprocessing, samples with label value 2 in the
+            # first column correspond to the "NoActivity" class.  The previous
+            # code attempted to remove them using `np.all` which reduced across
+            # the column and therefore kept most unwanted rows.  We instead
+            # perform a simple equality check per row.
+            no_activity_mask = yy_full[:, 0] != 2
             self.features = xx_full[no_activity_mask]
-            self.labels = yy_full[no_activity_mask]
+            self.labels = yy_full[no_activity_mask, 1:]
             
             print(f"Loaded fold {self.fold_num}: Raw features shape {xx_full.shape}, Processed features shape {self.features.shape}, Labels shape {self.labels.shape}")
 
