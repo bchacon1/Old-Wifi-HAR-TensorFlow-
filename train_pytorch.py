@@ -194,7 +194,12 @@ try: # Wrap the main training loop in a try-except for graceful interruption
             if latest_checkpoint_file and os.path.exists(latest_checkpoint_file):
                 print(f"    Resuming training for Fold {fold_idx + 1} from checkpoint: {latest_checkpoint_file}")
                 checkpoint = torch.load(latest_checkpoint_file, map_location=device) # Map to correct device
-                model.load_state_dict(checkpoint['model_state_dict'])
+                try:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                except RuntimeError as e:
+                    print(f"      Warning loading state_dict: {e}\n"
+                          f"      Attempting to load with strict=False so training can resume.")
+                    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 start_epoch = checkpoint['epoch']
                 

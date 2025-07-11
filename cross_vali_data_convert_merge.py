@@ -1,4 +1,13 @@
-import numpy as np,numpy
+"""Utilities for converting raw CSI CSV files to windowed feature/label datasets.
+
+This script mirrors the preprocessing used in the original TensorFlow code. It
+reads raw CSI input files and their corresponding annotation files, then
+generates sliding windows of features and labels.  Each window contains
+``window_size`` samples with a stride of ``slide_size``.  The resulting arrays
+are saved as CSVs for later training.
+"""
+
+import numpy as np
 import csv
 import glob
 import os
