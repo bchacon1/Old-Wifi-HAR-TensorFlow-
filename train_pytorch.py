@@ -24,6 +24,10 @@ from pytorch_model import (
     threshold,
 )
 
+# When generating the CSV files via `cross_vali_data_convert_merge.py`, each
+# sequence contains `raw_window_size` samples.  During training we downsample
+# to `window_size` timesteps to match the TensorFlow pipeline.
+
 # --- CONFIGURABLE PARAMETERS ---
 learning_rate = 0.0001
 training_iters = 2000  # number of minibatch updates per fold
@@ -88,8 +92,14 @@ else:
     all_labels_list_csv = []
 
     for label in activity_labels:
-        xx_file_path = os.path.join(input_files_dir, f"xx_{window_size}_{threshold}_{label}.csv")
-        yy_file_path = os.path.join(input_files_dir, f"yy_{window_size}_{threshold}_{label}.csv")
+        # Files are saved with the original sequence length (`raw_window_size`)
+        # as part of their filename.
+        xx_file_path = os.path.join(
+            input_files_dir, f"xx_{raw_window_size}_{threshold}_{label}.csv"
+        )
+        yy_file_path = os.path.join(
+            input_files_dir, f"yy_{raw_window_size}_{threshold}_{label}.csv"
+        )
 
         if not os.path.exists(xx_file_path) or not os.path.exists(yy_file_path):
             raise FileNotFoundError(f"Missing data files for activity '{label}'. "
