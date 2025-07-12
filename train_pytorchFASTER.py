@@ -147,6 +147,8 @@ if __name__ == '__main__':
             print(f"  Reading CSVs for activity: {label}...")
             features_csv = np.array(pd.read_csv(xx_file_path, header=None)).astype(np.float32)
             labels_csv = np.array(pd.read_csv(yy_file_path, header=None)).astype(np.float32)
+            # Drop the "NoActivity" column to match the 7-class setup
+            labels_csv = labels_csv[:, 1:]
 
             # The data from CSVs was generated with `raw_window_size` timesteps
             # and flattened.  Reshape back then downsample to `window_size` as
