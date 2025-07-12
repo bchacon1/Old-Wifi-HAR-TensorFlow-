@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import sklearn.metrics as sk_metrics
-import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 import sys # For clean exit
 import datetime # For recording start time and possibly other timing
 from torch.cuda.amp import autocast, GradScaler # For Mixed Precision Training (AMP)
@@ -15,7 +15,20 @@ from torch.cuda.amp import autocast, GradScaler # For Mixed Precision Training (
 # --- Import your model and dataset classes and parameters from pytorch_model.py ---
 # Make sure pytorch_model.py contains WifiHARLSTM, WifiActivityDataset,
 # and the global parameters like n_input, n_hidden, n_classes, window_size, threshold
-from pytorch_model import WifiHARLSTM, WifiActivityDataset, n_input, n_hidden, n_classes, window_size, threshold
+from pytorch_model import (
+    WifiHARLSTM,
+    WifiActivityDataset,
+    n_input,
+    n_hidden,
+    n_classes,
+    window_size,
+    raw_window_size,
+    threshold,
+)
+
+# `raw_window_size` corresponds to the sequence length used when generating
+# the CSV files via `cross_vali_data_convert_merge.py`.  The sequences are
+# downsampled to `window_size` timesteps before being fed to the model.
 
 # --- CONFIGURABLE PARAMETERS ---
 learning_rate = 0.0001
@@ -97,6 +110,23 @@ if __name__ == '__main__':
         print(f"Loading data from pre-saved .npy files: {all_features_npy_path}, {all_labels_npy_path}")
         all_features_full = np.load(all_features_npy_path)
         all_labels_full = np.load(all_labels_npy_path)
+
+        # Older .npy files may store sequences with `raw_window_size` time steps
+        # and an extra "NoActivity" column.  Mirror the preprocessing applied
+        # when loading from CSVs.
+        if all_features_full.shape[1] == raw_window_size:
+            all_features_full = all_features_full[:, ::2, :]
+        if all_labels_full.shape[1] == 8:
+            all_labels_full = all_labels_full[:, 1:]
+
+        # Filter out any "NoActivity" rows that may be present in previously
+        # saved arrays.  After dropping the first column the no-activity rows are
+        # all zeros.
+        no_activity_mask = np.sum(all_labels_full, axis=1) > 0
+        if np.count_nonzero(~no_activity_mask) > 0:
+            all_features_full = all_features_full[no_activity_mask]
+            all_labels_full = all_labels_full[no_activity_mask]
+
         print("Data loaded from .npy files successfully.")
     else:
         print("Loading data from CSVs (this may take a long time)...")
@@ -106,23 +136,42 @@ if __name__ == '__main__':
         all_features_list_csv = []
         all_labels_list_csv = []
 
-        for label in activity_labels:
-            xx_file_path = os.path.join(input_files_dir, f"xx_{window_size}_{threshold}_{label}.csv")
-            yy_file_path = os.path.join(input_files_dir, f"yy_{window_size}_{threshold}_{label}.csv")
+        def load_csv_pair(label):
+            xx_file_path = os.path.join(
+                input_files_dir,
+                f"xx_{raw_window_size}_{threshold}_{label}.csv",
+            )
+            yy_file_path = os.path.join(
+                input_files_dir,
+                f"yy_{raw_window_size}_{threshold}_{label}.csv",
+            )
 
             if not os.path.exists(xx_file_path) or not os.path.exists(yy_file_path):
-                raise FileNotFoundError(f"Missing data files for activity '{label}'. "
-                                        f"Please ensure 'cross_vali_data_convert_merge.py' ran successfully and generated "
-                                        f"{xx_file_path} and {yy_file_path}.")
+                raise FileNotFoundError(
+                    f"Missing data files for activity '{label}'. "
+                    f"Please ensure 'cross_vali_data_convert_merge.py' ran successfully and generated "
+                    f"{xx_file_path} and {yy_file_path}."
+                )
 
-            # Load data using pandas for convenience
             print(f"  Reading CSVs for activity: {label}...")
-            features_csv = np.array(pd.read_csv(xx_file_path, header=None)).astype(np.float32)
-            labels_csv = np.array(pd.read_csv(yy_file_path, header=None)).astype(np.float32)
+            features_csv = np.loadtxt(xx_file_path, delimiter=",", dtype=np.float32)
+            labels_csv = np.loadtxt(yy_file_path, delimiter=",", dtype=np.float32)
 
-            # The data from CSVs is flattened, need to reshape to [num_samples, window_size, n_input]
-            features_csv = features_csv.reshape(-1, window_size, n_input)
+            # Discard windows labeled as "NoActivity" (where the first column is
+            # 2) to keep only the seven activity classes.
+            no_activity_mask = labels_csv[:, 0] != 2
+            labels_csv = labels_csv[no_activity_mask, 1:]
+            features_csv = features_csv[no_activity_mask]
 
+            features_csv = features_csv.reshape(-1, raw_window_size, n_input)
+            features_csv = features_csv[:, ::2, :]
+
+            return features_csv, labels_csv
+
+        with ThreadPoolExecutor(max_workers=min(len(activity_labels), os.cpu_count() or 1)) as executor:
+            results = list(executor.map(load_csv_pair, activity_labels))
+
+        for features_csv, labels_csv in results:
             all_features_list_csv.append(features_csv)
             all_labels_list_csv.append(labels_csv)
 
