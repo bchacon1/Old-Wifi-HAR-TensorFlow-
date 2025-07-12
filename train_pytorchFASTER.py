@@ -15,7 +15,20 @@ from torch.cuda.amp import autocast, GradScaler # For Mixed Precision Training (
 # --- Import your model and dataset classes and parameters from pytorch_model.py ---
 # Make sure pytorch_model.py contains WifiHARLSTM, WifiActivityDataset,
 # and the global parameters like n_input, n_hidden, n_classes, window_size, threshold
-from pytorch_model import WifiHARLSTM, WifiActivityDataset, n_input, n_hidden, n_classes, window_size, threshold
+from pytorch_model import (
+    WifiHARLSTM,
+    WifiActivityDataset,
+    n_input,
+    n_hidden,
+    n_classes,
+    window_size,
+    raw_window_size,
+    threshold,
+)
+
+# `raw_window_size` corresponds to the sequence length used when generating
+# the CSV files via `cross_vali_data_convert_merge.py`.  The sequences are
+# downsampled to `window_size` timesteps before being fed to the model.
 
 # --- CONFIGURABLE PARAMETERS ---
 learning_rate = 0.0001
@@ -97,6 +110,15 @@ if __name__ == '__main__':
         print(f"Loading data from pre-saved .npy files: {all_features_npy_path}, {all_labels_npy_path}")
         all_features_full = np.load(all_features_npy_path)
         all_labels_full = np.load(all_labels_npy_path)
+
+        # Older .npy files may store sequences with `raw_window_size` time steps
+        # and an extra "NoActivity" column.  Mirror the preprocessing applied
+        # when loading from CSVs.
+        if all_features_full.shape[1] == raw_window_size:
+            all_features_full = all_features_full[:, ::2, :]
+        if all_labels_full.shape[1] == 8:
+            all_labels_full = all_labels_full[:, 1:]
+
         print("Data loaded from .npy files successfully.")
     else:
         print("Loading data from CSVs (this may take a long time)...")
@@ -107,8 +129,14 @@ if __name__ == '__main__':
         all_labels_list_csv = []
 
         for label in activity_labels:
-            xx_file_path = os.path.join(input_files_dir, f"xx_{window_size}_{threshold}_{label}.csv")
-            yy_file_path = os.path.join(input_files_dir, f"yy_{window_size}_{threshold}_{label}.csv")
+            # CSV file names include the original sequence length used for
+            # generation (`raw_window_size`).
+            xx_file_path = os.path.join(
+                input_files_dir, f"xx_{raw_window_size}_{threshold}_{label}.csv"
+            )
+            yy_file_path = os.path.join(
+                input_files_dir, f"yy_{raw_window_size}_{threshold}_{label}.csv"
+            )
 
             if not os.path.exists(xx_file_path) or not os.path.exists(yy_file_path):
                 raise FileNotFoundError(f"Missing data files for activity '{label}'. "
@@ -120,8 +148,11 @@ if __name__ == '__main__':
             features_csv = np.array(pd.read_csv(xx_file_path, header=None)).astype(np.float32)
             labels_csv = np.array(pd.read_csv(yy_file_path, header=None)).astype(np.float32)
 
-            # The data from CSVs is flattened, need to reshape to [num_samples, window_size, n_input]
-            features_csv = features_csv.reshape(-1, window_size, n_input)
+            # The data from CSVs was generated with `raw_window_size` timesteps
+            # and flattened.  Reshape back then downsample to `window_size` as
+            # done in the original TensorFlow preprocessing.
+            features_csv = features_csv.reshape(-1, raw_window_size, n_input)
+            features_csv = features_csv[:, ::2, :]
 
             all_features_list_csv.append(features_csv)
             all_labels_list_csv.append(labels_csv)
