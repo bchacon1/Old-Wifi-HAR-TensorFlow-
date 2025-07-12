@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import sklearn.metrics as sk_metrics
-import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 import sys # For clean exit
 
 # --- Import your model and dataset classes and parameters from pytorch_model.py ---
@@ -23,6 +23,10 @@ from pytorch_model import (
     raw_window_size,
     threshold,
 )
+
+# When generating the CSV files via `cross_vali_data_convert_merge.py`, each
+# sequence contains `raw_window_size` samples.  During training we downsample
+# to `window_size` timesteps to match the TensorFlow pipeline.
 
 # --- CONFIGURABLE PARAMETERS ---
 learning_rate = 0.0001
@@ -78,6 +82,13 @@ if LOAD_FROM_NPY and os.path.exists(all_features_npy_path) and os.path.exists(al
         all_features_full = all_features_full[:, ::2, :]
     if all_labels_full.shape[1] == 8:
         all_labels_full = all_labels_full[:, 1:]
+    # Remove rows that correspond to "NoActivity" if the labels were not
+    # filtered before saving. Such rows will have all zeros after dropping the
+    # first column.
+    no_activity_mask = np.sum(all_labels_full, axis=1) > 0
+    if np.count_nonzero(~no_activity_mask) > 0:
+        all_features_full = all_features_full[no_activity_mask]
+        all_labels_full = all_labels_full[no_activity_mask]
     print("Data loaded from .npy files successfully.")
 else:
     print("Loading data from CSVs (this may take a long time)...")
@@ -87,28 +98,44 @@ else:
     all_features_list_csv = []
     all_labels_list_csv = []
 
-    for label in activity_labels:
-        xx_file_path = os.path.join(input_files_dir, f"xx_{window_size}_{threshold}_{label}.csv")
-        yy_file_path = os.path.join(input_files_dir, f"yy_{window_size}_{threshold}_{label}.csv")
+    def load_csv_pair(label):
+        xx_file_path = os.path.join(
+            input_files_dir,
+            f"xx_{raw_window_size}_{threshold}_{label}.csv",
+        )
+        yy_file_path = os.path.join(
+            input_files_dir,
+            f"yy_{raw_window_size}_{threshold}_{label}.csv",
+        )
 
         if not os.path.exists(xx_file_path) or not os.path.exists(yy_file_path):
-            raise FileNotFoundError(f"Missing data files for activity '{label}'. "
-                                    f"Please ensure 'cross_vali_data_convert_merge.py' ran successfully and generated "
-                                    f"{xx_file_path} and {yy_file_path}.")
+            raise FileNotFoundError(
+                f"Missing data files for activity '{label}'. "
+                f"Please ensure 'cross_vali_data_convert_merge.py' ran successfully and generated "
+                f"{xx_file_path} and {yy_file_path}."
+            )
 
-        # Load data using pandas for convenience
         print(f"   Reading CSVs for activity: {label}...")
-        features_csv = np.array(pd.read_csv(xx_file_path, header=None)).astype(np.float32)
-        labels_csv = np.array(pd.read_csv(yy_file_path, header=None)).astype(np.float32)
-        # Drop the "NoActivity" column to match the 7-class setup
-        labels_csv = labels_csv[:, 1:]
+        features_csv = np.loadtxt(xx_file_path, delimiter=",", dtype=np.float32)
+        labels_csv = np.loadtxt(yy_file_path, delimiter=",", dtype=np.float32)
 
-        # CSVs were generated with `raw_window_size` timesteps.  In the original
-        # TensorFlow pipeline each sequence is then downsampled to 500
-        # timesteps.  We reproduce the same procedure here.
+        # Remove windows where the annotation indicates "NoActivity" (value 2 in
+        # the first column) to mirror the original TensorFlow preprocessing.
+        no_activity_mask = labels_csv[:, 0] != 2
+        labels_csv = labels_csv[no_activity_mask, 1:]
+        features_csv = features_csv[no_activity_mask]
+
+        # CSVs store sequences with `raw_window_size` timesteps. Downsample to
+        # `window_size` after reshaping to [num_samples, raw_window_size, n_input].
         features_csv = features_csv.reshape(-1, raw_window_size, n_input)
         features_csv = features_csv[:, ::2, :]
 
+        return features_csv, labels_csv
+
+    with ThreadPoolExecutor(max_workers=min(len(activity_labels), os.cpu_count() or 1)) as executor:
+        results = list(executor.map(load_csv_pair, activity_labels))
+
+    for features_csv, labels_csv in results:
         all_features_list_csv.append(features_csv)
         all_labels_list_csv.append(labels_csv)
 
