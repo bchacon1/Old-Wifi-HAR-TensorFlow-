@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import pandas as pd
 import numpy as np
 import os
 from torch.utils.data import Dataset, DataLoader
@@ -91,8 +90,8 @@ class WifiActivityDataset(Dataset):
 
             # Load all data first, then apply subsampling as per original
             # TensorFlow input_data.py
-            xx_full = np.array(pd.read_csv(xx_file, header=None)).astype(np.float32)
-            yy_full = np.array(pd.read_csv(yy_file, header=None)).astype(np.float32)
+            xx_full = np.loadtxt(xx_file, delimiter=",", dtype=np.float32)
+            yy_full = np.loadtxt(yy_file, delimiter=",", dtype=np.float32)
 
             # Apply the subsampling: "SKIPROW = 2" in original means xx = xx[::2,:]
             if skip_rows > 1:
