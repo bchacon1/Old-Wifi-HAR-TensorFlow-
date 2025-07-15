@@ -81,14 +81,18 @@ if LOAD_FROM_NPY and os.path.exists(all_features_npy_path) and os.path.exists(al
     if all_features_full.shape[1] == raw_window_size:
         all_features_full = all_features_full[:, ::2, :]
     if all_labels_full.shape[1] == 8:
-        all_labels_full = all_labels_full[:, 1:]
-    # Remove rows that correspond to "NoActivity" if the labels were not
-    # filtered before saving. Such rows will have all zeros after dropping the
-    # first column.
-    no_activity_mask = np.sum(all_labels_full, axis=1) > 0
-    if np.count_nonzero(~no_activity_mask) > 0:
+        # Older arrays may still contain the "NoActivity" column and rows.
+        no_activity_mask = all_labels_full[:, 0] != 2
         all_features_full = all_features_full[no_activity_mask]
-        all_labels_full = all_labels_full[no_activity_mask]
+        all_labels_full = all_labels_full[no_activity_mask, 1:]
+    else:
+        # Remove rows that correspond to "NoActivity" if the labels were already
+        # sliced but rows were not filtered. After dropping the first column,
+        # no-activity rows contain all zeros.
+        no_activity_mask = np.sum(all_labels_full, axis=1) > 0
+        if np.count_nonzero(~no_activity_mask) > 0:
+            all_features_full = all_features_full[no_activity_mask]
+            all_labels_full = all_labels_full[no_activity_mask]
     print("Data loaded from .npy files successfully.")
 else:
     print("Loading data from CSVs (this may take a long time)...")
@@ -106,14 +110,6 @@ else:
         yy_file_path = os.path.join(
             input_files_dir,
             f"yy_{raw_window_size}_{threshold}_{label}.csv",
-    for label in activity_labels:
-        # Files are saved with the original sequence length (`raw_window_size`)
-        # as part of their filename.
-        xx_file_path = os.path.join(
-            input_files_dir, f"xx_{raw_window_size}_{threshold}_{label}.csv"
-        )
-        yy_file_path = os.path.join(
-            input_files_dir, f"yy_{raw_window_size}_{threshold}_{label}.csv"
         )
 
         if not os.path.exists(xx_file_path) or not os.path.exists(yy_file_path):
