@@ -145,15 +145,6 @@ if __name__ == '__main__':
             yy_file_path = os.path.join(
                 input_files_dir,
                 f"yy_{raw_window_size}_{threshold}_{label}.csv",
-
-        for label in activity_labels:
-            # CSV file names include the original sequence length used for
-            # generation (`raw_window_size`).
-            xx_file_path = os.path.join(
-                input_files_dir, f"xx_{raw_window_size}_{threshold}_{label}.csv"
-            )
-            yy_file_path = os.path.join(
-                input_files_dir, f"yy_{raw_window_size}_{threshold}_{label}.csv"
             )
 
             if not os.path.exists(xx_file_path) or not os.path.exists(yy_file_path):
@@ -180,12 +171,6 @@ if __name__ == '__main__':
 
         with ThreadPoolExecutor(max_workers=min(len(activity_labels), os.cpu_count() or 1)) as executor:
             results = list(executor.map(load_csv_pair, activity_labels))
-
-            # The data from CSVs was generated with `raw_window_size` timesteps
-            # and flattened.  Reshape back then downsample to `window_size` as
-            # done in the original TensorFlow preprocessing.
-            features_csv = features_csv.reshape(-1, raw_window_size, n_input)
-            features_csv = features_csv[:, ::2, :]
 
         for features_csv, labels_csv in results:
             all_features_list_csv.append(features_csv)
