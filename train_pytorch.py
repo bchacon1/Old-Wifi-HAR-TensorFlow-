@@ -106,14 +106,6 @@ else:
         yy_file_path = os.path.join(
             input_files_dir,
             f"yy_{raw_window_size}_{threshold}_{label}.csv",
-    for label in activity_labels:
-        # Files are saved with the original sequence length (`raw_window_size`)
-        # as part of their filename.
-        xx_file_path = os.path.join(
-            input_files_dir, f"xx_{raw_window_size}_{threshold}_{label}.csv"
-        )
-        yy_file_path = os.path.join(
-            input_files_dir, f"yy_{raw_window_size}_{threshold}_{label}.csv"
         )
 
         if not os.path.exists(xx_file_path) or not os.path.exists(yy_file_path):
