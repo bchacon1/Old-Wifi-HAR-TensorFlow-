@@ -16,6 +16,10 @@ import csv
 import glob
 import os
 
+def _count_windows(num_rows):
+    """Return number of sliding windows for a sequence of length ``num_rows``."""
+    return (num_rows + 1 - 2 * window_size) // slide_size + 1
+
 window_size = 1000
 threshold = 60
 slide_size = 200 #less than window_size!!!
@@ -110,6 +114,67 @@ def dataimport(path1, path2):
 
 #### Main ####
 if not os.path.exists("input_files/"):
+    os.makedirs("input_files/")
+
+labels = ["bed", "fall", "pickup", "run", "sitdown", "standup", "walk"]
+
+# --- Determine total number of windows across all activities ---
+label_window_counts = []
+for lbl in labels:
+    path_pattern = f"./Dataset/Data/annotation_*{lbl}*.csv"
+    count = 0
+    for anno_file in sorted(glob.glob(path_pattern)):
+        num_lines = sum(1 for _ in open(anno_file))
+        count += _count_windows(num_lines)
+    label_window_counts.append(count)
+
+total_windows = sum(label_window_counts)
+
+# Preallocate memmap arrays so we never keep all data in memory
+features_mm = np.lib.format.open_memmap(
+    os.path.join("input_files", "all_features_full.npy"),
+    mode="w+",
+    dtype=np.float32,
+    shape=(total_windows, window_size, 90),
+)
+labels_mm = np.lib.format.open_memmap(
+    os.path.join("input_files", "all_labels_full.npy"),
+    mode="w+",
+    dtype=np.float32,
+    shape=(total_windows, 8),
+)
+
+start_idx = 0
+for lbl, lbl_count in zip(labels, label_window_counts):
+    filepath1 = f"./Dataset/Data/input_*{lbl}*.csv"
+    filepath2 = f"./Dataset/Data/annotation_*{lbl}*.csv"
+    out_x_csv = f"./input_files/xx_{window_size}_{threshold}_{lbl}.csv"
+    out_y_csv = f"./input_files/yy_{window_size}_{threshold}_{lbl}.csv"
+
+    x, y = dataimport(filepath1, filepath2)
+
+    # Save individual CSV files for backward compatibility
+    with open(out_x_csv, "w") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerows(x.reshape(len(x), -1))
+    with open(out_y_csv, "w") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerows(y)
+
+    # Store in preallocated memmap
+    end_idx = start_idx + len(x)
+    features_mm[start_idx:end_idx] = x.astype(np.float32)
+    labels_mm[start_idx:end_idx] = y.astype(np.float32)
+    start_idx = end_idx
+
+    print(lbl + "finish!")
+
+# Flush memmaps to disk
+features_mm.flush()
+labels_mm.flush()
+print(
+    "Saved combined dataset to input_files/all_features_full.npy and all_labels_full.npy"
+)
         os.makedirs("input_files/")
 
 all_features = []
