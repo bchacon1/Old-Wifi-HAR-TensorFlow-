@@ -23,8 +23,11 @@ scikit-learn
 
 1. "git clone" this repository.  
  
-2. Run the cross_vali_data_convert_merge.py  
- -> This script makes csv files(input features & label) of each activity in "input_files" folder.　　
+2. Run the cross_vali_data_convert_merge.py
+ -> This script creates CSV files (input features & labels) of each activity in the
+    ``input_files`` folder. It also saves the combined dataset as
+    ``input_files/all_features_full.npy`` and ``input_files/all_labels_full.npy``
+    so the PyTorch training scripts can load the data directly.
 
 3. Run the cross_vali_recurrent_network_wifi_activity.py 
  -> This script makes learning curve images & confusion matrix in a new folder.　　
