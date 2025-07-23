@@ -175,3 +175,36 @@ labels_mm.flush()
 print(
     "Saved combined dataset to input_files/all_features_full.npy and all_labels_full.npy"
 )
+        os.makedirs("input_files/")
+
+all_features = []
+all_labels = []
+
+for i, label in enumerate (["bed", "fall", "pickup", "run", "sitdown", "standup", "walk"]):
+        filepath1 = "./Dataset/Data/input_*" + str(label) + "*.csv"
+        filepath2 = "./Dataset/Data/annotation_*" + str(label) + "*.csv"
+        outputfilename1 = "./input_files/xx_" + str(window_size) + "_" + str(threshold) + "_" + label + ".csv"
+        outputfilename2 = "./input_files/yy_" + str(window_size) + "_" + str(threshold) + "_" + label + ".csv"
+
+        x, y = dataimport(filepath1, filepath2)
+
+        # Save individual CSV files for backward compatibility
+        with open(outputfilename1, "w") as f:
+                writer = csv.writer(f, lineterminator="\n")
+                writer.writerows(x.reshape(len(x), -1))
+        with open(outputfilename2, "w") as f:
+                writer = csv.writer(f, lineterminator="\n")
+                writer.writerows(y)
+
+        # Accumulate arrays for combined .npy output
+        all_features.append(x)
+        all_labels.append(y)
+
+        print(label + "finish!")
+
+# Save combined dataset as .npy for faster loading in training scripts
+all_features_full = np.concatenate(all_features, axis=0)
+all_labels_full = np.concatenate(all_labels, axis=0)
+np.save(os.path.join("input_files", "all_features_full.npy"), all_features_full)
+np.save(os.path.join("input_files", "all_labels_full.npy"), all_labels_full)
+print("Saved combined dataset to input_files/all_features_full.npy and all_labels_full.npy")

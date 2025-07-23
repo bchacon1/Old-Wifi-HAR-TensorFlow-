@@ -31,6 +31,7 @@ scikit-learn
     loaded quickly by the PyTorch training scripts without consuming large
     amounts of RAM.
 
+
 3. Run the cross_vali_recurrent_network_wifi_activity.py 
  -> This script makes learning curve images & confusion matrix in a new folder.　　
 
