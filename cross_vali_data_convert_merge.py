@@ -62,7 +62,7 @@ def dataimport(path1: str, path2: str):
                 "no": 0,
             }
             for j in range(raw_window_size):
-                lbl = y_pre[j]
+                lbl = y_pre[j][0]
                 if lbl in counts:
                     counts[lbl] += 1
                 else:

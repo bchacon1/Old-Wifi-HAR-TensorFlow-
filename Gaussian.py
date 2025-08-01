@@ -6,62 +6,60 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
 from pytorch_model import WifiHARLSTM, n_input, n_hidden, n_classes
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 DEFAULT_FEATURES_PATH = "input_files/all_features_full.npy"
 DEFAULT_LABELS_PATH = "input_files/all_labels_full.npy"
 DEFAULT_MODEL_PATH = "PyTorch_LR0.0001_BATCHSIZE200_NHIDDEN200/checkpoint_fold5_epoch52.pth"
-DEFAULT_EPSILONS = [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
+DEFAULT_STDDEVS = [0, 0.3, 0.6, 1.5, 3.0, 6.0]
 
 def load_data(features_path: str, labels_path: str) -> DataLoader:
     features = np.load(features_path)
+    print(f"Data Stats: std={np.std(features):.4f}, mean={np.mean(features):.4f}") # Add this line
     labels = np.load(labels_path)
     dataset = TensorDataset(
         torch.from_numpy(features).float(),
         torch.from_numpy(labels).float(),
     )
-    return DataLoader(dataset, batch_size=200, shuffle=False)
+    return DataLoader(dataset, batch_size=200, shuffle=True)
 
-def fgsm_attack(data: torch.Tensor, epsilon: float, data_grad: torch.Tensor) -> torch.Tensor:
-    sign_data_grad = data_grad.sign()
-    perturbed = data + epsilon * sign_data_grad
-    return perturbed
+def add_gaussian_noise(data: torch.Tensor, stddev: float) -> torch.Tensor:
+    noise = torch.randn_like(data) * stddev
+    if stddev > 0:
+        print(f"Injected noise: std={noise.std().item():.4f}, max={noise.max().item():.4f}")
+    return data + noise 
 
-def test_full(model, device, loader, epsilon):
+
+def test(model: torch.nn.Module, device: torch.device, loader: DataLoader, stddev: float):
     correct = 0
     total = 0
+    adv_examples = []
 
-    print(f"\n--- Full FGSM Attack: Epsilon = {epsilon} ---")
-
-    for i, (data, target_onehot) in enumerate(loader):
+    for data, target_onehot in loader:
         data, target_onehot = data.to(device), target_onehot.to(device)
         target = torch.argmax(target_onehot, dim=1)
-        data.requires_grad = True
 
-        # Forward
-        output = model(data)
-        loss = F.cross_entropy(output, target)
-        model.zero_grad()
-        data.retain_grad()
-        loss.backward()
+        noisy_data = add_gaussian_noise(data, stddev)
+        output = model(noisy_data)
+        pred = output.max(1)[1]
 
-        data_grad = data.grad.data
-        perturbed_data = fgsm_attack(data, epsilon, data_grad)
-
-        # Re-classify perturbed input
-        output_adv = model(perturbed_data)
-        pred = output_adv.argmax(dim=1)
         correct += (pred == target).sum().item()
         total += target.size(0)
 
+        if stddev == 0 and len(adv_examples) < 5:
+            adv_examples.extend(noisy_data[:5].detach().cpu().numpy())
+
     final_acc = correct / total
-    print(f"Epsilon: {epsilon} | Accuracy = {correct} / {total} = {final_acc:.4f}")
-    return final_acc
+    print(f"Stddev: {stddev}\tTest Accuracy = {correct} / {total} = {final_acc:.4f}")
+    return final_acc, adv_examples
 
 def main():
-    parser = argparse.ArgumentParser(description="Full FGSM attack on Wifi HAR model")
-    parser.add_argument("--model", default=DEFAULT_MODEL_PATH, help="Path to trained model")
+    parser = argparse.ArgumentParser(description="Gaussian noise attack on Wifi HAR model")
+    parser.add_argument("--model", default=DEFAULT_MODEL_PATH, help="Path to trained model .pth file")
     parser.add_argument("--features", default=DEFAULT_FEATURES_PATH, help="Numpy features file")
     parser.add_argument("--labels", default=DEFAULT_LABELS_PATH, help="Numpy labels file")
-    parser.add_argument("--epsilons", nargs="*", type=float, default=DEFAULT_EPSILONS, help="List of epsilons")
+    parser.add_argument("--stddevs", nargs="*", type=float, default=DEFAULT_STDDEVS, help="List of stddev values")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps")
@@ -77,17 +75,18 @@ def main():
     model.eval()
 
     accuracies = []
-    for eps in args.epsilons:
-        acc = test_full(model, device, loader, eps)
+    for std in args.stddevs:
+        acc, _ = test(model, device, loader, std)
         accuracies.append(acc)
 
     plt.figure(figsize=(5, 5))
-    plt.plot(args.epsilons, accuracies, "*-")
+    plt.plot(args.stddevs, accuracies, "*-", label="Gaussian Noise")
     plt.yticks(np.arange(0, 1.1, step=0.1))
-    plt.xlabel("Epsilon")
+    plt.xlabel("Stddev")
     plt.ylabel("Accuracy")
-    plt.title("Full Attack: Accuracy vs Epsilon")
+    plt.title("Accuracy vs Gaussian Noise Stddev")
     plt.grid(True)
+    plt.legend()
     plt.show()
 
 if __name__ == "__main__":
